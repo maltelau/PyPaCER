@@ -1,0 +1,57 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: PyPaCER
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Mikkel V.
+    family-names: Petersen
+    email: mikkel.v.petersen@gmail.com
+    orcid: 'https://orcid.org/0000-0001-7760-6797'
+repository-code: 'https://github.com/mvpetersen/pypacer'
+url: 'https://github.com/mvpetersen/pypacer'
+abstract: >-
+  PyPaCER is a Python implementation of PaCER (see reference) for reconstructing deep brain
+  stimulation (DBS) electrode positions and contact locations from
+  post-operative CT imaging. It provides automatic detection of multiple
+  DBS electrodes with sub-voxel precision trajectory fitting and robust
+  contact localization. The software supports various Medtronic DBS
+  electrodes and offers GPU acceleration for faster processing.
+keywords:
+  - deep brain stimulation
+  - DBS
+  - electrode reconstruction
+  - medical imaging
+  - neurosurgery
+  - neuroimaging
+  - CT imaging
+  - electrode localization
+license: MIT
+version: 1.0.0
+date-released: '22-10-2025'  # Update to your actual release date
+references:
+  - type: article
+    title: 'PaCER - A fully automated method for electrode trajectory and contact reconstruction in deep brain stimulation'
+    authors:
+      - family-names: Husch
+        given-names: Andreas
+      - family-names: Petersen
+        given-names: Mikkel V.
+      - family-names: Gemmar
+        given-names: Peter
+      - family-names: Goncalves
+        given-names: Jorge
+      - family-names: Hertel
+        given-names: Frank
+    journal: 'NeuroImage: Clinical'
+    volume: 17
+    start: 80
+    end: 89
+    year: 2018
+    doi: '10.1016/j.nicl.2017.10.004'
+    url: 'https://www.sciencedirect.com/science/article/pii/S2213158217302450'
+    scope: 'PyPaCER is a Python implementation of the original MATLAB PaCER algorithm.'

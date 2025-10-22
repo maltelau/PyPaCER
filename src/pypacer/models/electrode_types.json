@@ -1,0 +1,72 @@
+{
+  "dbs_leads": {
+    "medtronic": {
+      "company": "Medtronic",
+      "leads": [
+        {
+          "model": "3387",
+          "name": "DBS Lead Model 3387",
+          "diameter_mm": 1.27,
+          "contact_spacing_mm": 1.5,
+          "contact_length_mm": 1.5,
+          "segmented": false,
+          "contact_array": 4,
+          "total_contacts": 4,
+          "contact_segments": null,
+          "notes": "Standard quadripolar lead"
+        },
+        {
+          "model": "3389",
+          "name": "DBS Lead Model 3389",
+          "diameter_mm": 1.27,
+          "contact_spacing_mm": 0.5,
+          "contact_length_mm": 1.5,
+          "segmented": false,
+          "contact_array": 4,
+          "total_contacts": 4,
+          "contact_segments": null,
+          "notes": "Standard quadripolar lead with closer spacing"
+        },
+        {
+          "model": "B33015",
+          "name": "Sensight Directional Lead",
+          "diameter_mm": 1.27,
+          "contact_spacing_mm": 1.5,
+          "contact_length_mm": 1.5,
+          "segmented": true,
+          "contact_array": 4,
+          "total_contacts": 8,
+          "contact_segments": {
+            "level_1": {"type": "cylindrical", "segments": 1},
+            "level_2": {"type": "segmented", "segments": 3},
+            "level_3": {"type": "segmented", "segments": 3},
+            "level_4": {"type": "cylindrical", "segments": 1}
+          },
+          "notes": "Directional lead with 2 segmented levels"
+        },
+        {
+          "model": "B33005",
+          "name": "Sensight Directional Lead",
+          "diameter_mm": 1.27,
+          "contact_spacing_mm": 0.5,
+          "contact_length_mm": 1.5,
+          "segmented": true,
+          "contact_array": 4,
+          "total_contacts": 8,
+          "contact_segments": {
+            "level_1": {"type": "cylindrical", "segments": 1},
+            "level_2": {"type": "segmented", "segments": 3},
+            "level_3": {"type": "segmented", "segments": 3},
+            "level_4": {"type": "cylindrical", "segments": 1}
+          },
+          "notes": "Directional lead with closer spacing"
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "last_updated": "2025-01",
+    "notes": [
+    ]
+  }
+}

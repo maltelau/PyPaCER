@@ -1,0 +1,212 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pypacer"
+version = "1.0.0"
+description = "Python implementation of PaCER (MATLAB) - Precise and Convenient Electrode Reconstruction for DBS"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Mikkel V. Petersen", email = "mikkel.v.petersen@gmail.com"},
+]
+maintainers = [
+    {name = "Mikkel V. Petersen", email = "mikkel.v.petersen@gmail.com"},
+]
+keywords = [
+    "deep-brain-stimulation",
+    "dbs",
+    "electrode-reconstruction",
+    "medical-imaging",
+    "neurosurgery",
+    "neuroimaging",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Healthcare Industry",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy>=1.21.0",
+    "scipy>=1.7.0",
+    "scikit-learn>=1.0.0",
+    "scikit-image>=0.18.0",
+    "nibabel>=3.2.0",
+    "matplotlib>=3.4.0",
+    "tqdm>=4.62.0",
+    "click>=8.0.0",
+    "pyyaml>=5.4.0",
+    "h5py>=3.0.0",
+    "pandas>=1.3.0",
+    "plotly>=5.0.0",
+    "antspyx>=0.6.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.2.0",
+    "pytest-cov>=2.12.0",
+    "black>=21.6b0",
+    "ruff>=0.1.0",
+    "mypy>=0.910",
+    "sphinx>=4.0.0",
+    "ipython>=7.0.0",
+    "jupyter>=1.0.0",
+]
+viz = [
+    "pyvista>=0.32.0",
+]
+gui = [
+    "PyQt5>=5.15.0",
+]
+gpu = [
+    "torch>=1.9.0",
+]
+perf = [
+    "numba>=0.54.0",
+    "joblib>=1.0.0",
+]
+all = [
+    "pypacer[dev,viz,gui,gpu,perf]",
+]
+
+[project.urls]
+Homepage = "https://github.com/mvpetersen/pypacer"
+Repository = "https://github.com/mvpetersen/pypacer"
+"Bug Tracker" = "https://github.com/mvpetersen/pypacer/issues"
+"Original PaCER Paper" = "https://doi.org/10.1016/j.nicl.2017.10.004"
+"Original PaCER Repository" = "https://github.com/adhusch/PaCER"
+
+[project.scripts]
+pypacer = "pypacer.cli.pypacer:main"
+pypacer-gui = "pypacer.cli.pypacer_gui:main"
+pypacer-gpu = "pypacer.cli.pypacer_gpu:main"
+pypacer-report = "pypacer.cli.pypacer_report:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pypacer"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/pypacer",
+    "/tests",
+    "/docs",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "C",  # flake8-comprehensions
+    "B",  # flake8-bugbear
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "nibabel.*",
+    "sklearn.*",
+    "skimage.*",
+    "vtk.*",
+    "pyvista.*",
+    "SimpleITK.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--cov=pypacer",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+    "-v",
+]
+
+[tool.coverage.run]
+source = ["src/pypacer"]
+omit = [
+    "*/tests/*",
+    "*/__init__.py",
+    "*/cli.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if __name__ == .__main__.:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]
+
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv]
+prerelease = "allow"
