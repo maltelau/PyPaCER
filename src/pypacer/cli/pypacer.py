@@ -144,6 +144,55 @@ Examples:
         help="Z resolution for refinement in mm",
     )
 
+    # Orientation detection parameters
+    orientation_group = parser.add_argument_group(
+        "Orientation detection",
+        "Parameters for directional marker detection and orientation analysis",
+    )
+
+    orientation_group.add_argument(
+        "--orientation-radii",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Circular sampling radii in mm for marker orientation (default: 1.25 1.5 1.75)",
+    )
+
+    orientation_group.add_argument(
+        "--orientation-angle-step",
+        type=float,
+        default=None,
+        help="Angular step in degrees for orientation sampling (default: 0.1)",
+    )
+
+    orientation_group.add_argument(
+        "--orientation-smoothing",
+        type=int,
+        default=None,
+        help="Smoothing window size for orientation profiles (default: 5)",
+    )
+
+    orientation_group.add_argument(
+        "--marker-deviation-threshold",
+        type=float,
+        default=None,
+        help="Minimum skeleton deviation for marker peak detection (default: 0.08)",
+    )
+
+    orientation_group.add_argument(
+        "--marker-min-separation",
+        type=float,
+        default=None,
+        help="Minimum valid angular separation between markers in degrees (default: 120)",
+    )
+
+    orientation_group.add_argument(
+        "--marker-max-separation",
+        type=float,
+        default=None,
+        help="Maximum valid angular separation between markers in degrees (default: 150)",
+    )
+
     # Other options
     parser.add_argument(
         "--no-save", action="store_true", help="Do not save results to file"
@@ -276,6 +325,21 @@ Examples:
             z_res = args.z_resolution or 0.025
             grid_size = 1.5  # Standard grid
 
+        # Build orientation_params from CLI arguments
+        orientation_params = {}
+        if args.orientation_radii is not None:
+            orientation_params["radii_mm"] = args.orientation_radii
+        if args.orientation_angle_step is not None:
+            orientation_params["angle_increment_deg"] = args.orientation_angle_step
+        if args.orientation_smoothing is not None:
+            orientation_params["smoothing_window"] = args.orientation_smoothing
+        if args.marker_deviation_threshold is not None:
+            orientation_params["deviation_threshold"] = args.marker_deviation_threshold
+        if args.marker_min_separation is not None:
+            orientation_params["min_separation_deg"] = args.marker_min_separation
+        if args.marker_max_separation is not None:
+            orientation_params["max_separation_deg"] = args.marker_max_separation
+
         # Detect electrodes with appropriate parameters
         if args.detection_method == "radial_search":
             # Use detect_electrodes_radial which accepts resolution parameters
@@ -289,6 +353,7 @@ Examples:
                 search_radii_mm=args.search_radii,
                 max_electrodes=4,
                 verbose=True,  # Always show progress for radial search
+                orientation_params=orientation_params or None,
             )
         else:
             # Use detect_electrodes for brain mask methods
@@ -301,6 +366,7 @@ Examples:
                 auto_save_json=not args.no_save,
                 detection_method=args.detection_method,
                 search_radii_mm=args.search_radii,
+                orientation_params=orientation_params or None,
             )
 
         elapsed_time = time.time() - start_time
@@ -350,6 +416,38 @@ Examples:
             else:
                 print("  Contacts: Failed to detect")
 
+            # Orientation data
+            if hasattr(electrode, "orientation_data") and electrode.orientation_data:
+                od = electrode.orientation_data
+                has_markers = od.get("has_markers", False)
+                if has_markers and "markers" in od:
+                    markers = od["markers"]
+                    print("  Orientation:")
+                    for label in ("B", "A"):
+                        if label in markers:
+                            m = markers[label]
+                            detected = m.get("detected_angle_traj_perp_deg")
+                            fitted = m.get("fitted_angle_traj_perp_deg")
+                            loc = m.get("location_mm")
+                            conf = m.get("confidence")
+                            parts = [f"Marker {label}:"]
+                            if loc is not None:
+                                parts.append(f"{loc:.1f}mm")
+                            if detected is not None:
+                                parts.append(f"detected {detected:.1f}\u00b0")
+                            if fitted is not None:
+                                parts.append(f"fitted {fitted:.1f}\u00b0")
+                            if conf is not None:
+                                parts.append(f"(conf {conf:.2f})")
+                            print(f"    {' '.join(parts)}")
+                    sep = od.get("marker_pair_angular_separation_deg")
+                    valid = od.get("marker_pair_valid")
+                    if sep is not None:
+                        status = "valid" if valid else "invalid"
+                        print(f"    Separation: {sep:.1f}\u00b0 ({status})")
+                else:
+                    print(f"  Orientation: no directional markers detected")
+
         # Save results if requested
         if not args.no_save and args.output_format != "json":  # JSON already saved
             output_file = (
@@ -363,24 +461,39 @@ Examples:
             print("\nGenerating HTML report...")
             try:
                 from pypacer._version import __version__ as PYPACER_VERSION
-                from pypacer.visualization.report_generator import (
+                from pypacer.visualization.report import (
                     generate_html_report_from_data,
                 )
 
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 report_path = output_dir / f"pypacer_report_{timestamp}.html"
 
-                # Prepare metadata
+                # Prepare metadata (matching what's saved in JSON by _save_reconstruction_json)
+                import numpy as np
+
+                ct_shape = pypacer.ct_data.shape
+                voxel_min = np.array([0, 0, 0, 1])
+                voxel_max = np.array([ct_shape[0] - 1, ct_shape[1] - 1, ct_shape[2] - 1, 1])
+                world_min = (pypacer.affine @ voxel_min)[:3]
+                world_max = (pypacer.affine @ voxel_max)[:3]
+                ct_bbox_min = np.minimum(world_min, world_max)
+                ct_bbox_max = np.maximum(world_min, world_max)
+
                 metadata = {
-                    "ct_file": str(ct_path),
+                    "ct_file": str(ct_path.resolve()),
                     "timestamp": datetime.now().isoformat(),
                     "pypacer_version": PYPACER_VERSION,
                     "voxel_sizes_mm": pypacer.voxel_sizes.tolist(),
                     "metal_threshold_HU": args.metal_threshold,
                     "num_electrodes_detected": len(electrodes),
+                    "ct_volume_shape": list(ct_shape),
+                    "ct_volume_bounding_box": {
+                        "min": ct_bbox_min.tolist(),
+                        "max": ct_bbox_max.tolist(),
+                    },
                 }
 
-                # Prepare reconstruction parameters (matching what's saved in JSON)
+                # Prepare reconstruction parameters
                 reconstruction_parameters = {
                     "method": (
                         "detect_electrodes_radial"
@@ -403,7 +516,7 @@ Examples:
                     "debug_output_enabled": args.debug,
                 }
                 if args.detection_method == "radial_search":
-                    reconstruction_parameters["search_radii_mm"] = [30, 40, 50]
+                    reconstruction_parameters["search_radii_mm"] = args.search_radii or [30, 40, 50]
 
                 # Generate report directly from electrode data
                 generate_html_report_from_data(

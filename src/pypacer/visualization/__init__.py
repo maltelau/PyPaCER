@@ -8,7 +8,7 @@ from .electrode_sliceview import (
     get_world_to_voxel_transform,
     project_contacts_to_plane,
 )
-from .report_generator import generate_html_report
+from .report import generate_html_report, generate_html_report_from_data
 
 __all__ = [
     "generate_html_report",

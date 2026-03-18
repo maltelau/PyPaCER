@@ -88,6 +88,7 @@ class PolynomialElectrodeModel:
         bounding_box: Optional[Tuple[np.ndarray, np.ndarray]] = None,
         skeleton_deviations_mm: Optional[np.ndarray] = None,
         polynomial_before_tip_detection: Optional[np.ndarray] = None,
+        orientation_data: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize electrode model.
@@ -101,6 +102,7 @@ class PolynomialElectrodeModel:
             distance_scale: Optional distance values in mm from tip
             bounding_box: Optional (min_coords, max_coords) bounding box in world coordinates
             skeleton_deviations_mm: Optional deviation values between skeleton and polynomial (aligned with distance_scale)
+            orientation_data: Optional orientation detection results (marker locations, angles, etc.)
         """
         self.polynomial = polynomial
 
@@ -139,6 +141,9 @@ class PolynomialElectrodeModel:
         self.bounding_box = bounding_box
         self.skeleton_deviations_mm = skeleton_deviations_mm
         self.polynomial_before_tip_detection = polynomial_before_tip_detection
+        self.orientation_data = orientation_data
+        self.tip_hemisphere = None
+        self.entry_hemisphere = None
 
         # Cache frequently used values
         self._length = None
@@ -271,6 +276,15 @@ class PolynomialElectrodeModel:
         # Include contact detection results if available (debug mode)
         if hasattr(self, "contact_detection_results"):
             data["contact_detection_results"] = self.contact_detection_results
+        # Include orientation data if available
+        if self.orientation_data is not None:
+            data["orientation"] = self.orientation_data
+        # Include hemisphere labels if available
+        if self.tip_hemisphere is not None:
+            data["tip_hemisphere"] = self.tip_hemisphere
+            data["side"] = self.tip_hemisphere  # Add 'side' for HTML report compatibility
+        if self.entry_hemisphere is not None:
+            data["entry_hemisphere"] = self.entry_hemisphere
         return data
 
     def to_matlab_struct(self) -> Dict[str, Any]:
@@ -299,7 +313,7 @@ class PolynomialElectrodeModel:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PolynomialElectrodeModel":
         """Create from dictionary."""
-        return cls(
+        electrode = cls(
             polynomial=np.array(data["polynomial"]),
             electrode_type=data["electrode_type"],
             contact_positions=np.array(data["contact_positions"]),
@@ -317,7 +331,11 @@ class PolynomialElectrodeModel:
                 if "skeleton_deviations_mm" in data
                 else None
             ),
+            orientation_data=data.get("orientation"),
         )
+        electrode.tip_hemisphere = data.get("tip_hemisphere")
+        electrode.entry_hemisphere = data.get("entry_hemisphere")
+        return electrode
 
     def __repr__(self) -> str:
         return (

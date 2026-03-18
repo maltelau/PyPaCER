@@ -310,13 +310,41 @@ Examples:
                 print(
                     f"  Contact positions (mm from tip): {electrode.contact_positions}"
                 )
+            if hasattr(electrode, "orientation_data") and electrode.orientation_data:
+                od = electrode.orientation_data
+                has_markers = od.get("has_markers", False)
+                if has_markers and "markers" in od:
+                    markers = od["markers"]
+                    print("  Orientation:")
+                    for label in ("B", "A"):
+                        if label in markers:
+                            m = markers[label]
+                            detected = m.get("detected_angle_traj_perp_deg")
+                            fitted = m.get("fitted_angle_traj_perp_deg")
+                            loc = m.get("location_mm")
+                            conf = m.get("confidence")
+                            parts = [f"Marker {label}:"]
+                            if loc is not None:
+                                parts.append(f"{loc:.1f}mm")
+                            if detected is not None:
+                                parts.append(f"detected {detected:.1f}\u00b0")
+                            if fitted is not None:
+                                parts.append(f"fitted {fitted:.1f}\u00b0")
+                            if conf is not None:
+                                parts.append(f"(conf {conf:.2f})")
+                            print(f"    {' '.join(parts)}")
+                    sep = od.get("marker_pair_angular_separation_deg")
+                    valid = od.get("marker_pair_valid")
+                    if sep is not None:
+                        status = "valid" if valid else "invalid"
+                        print(f"    Separation: {sep:.1f}\u00b0 ({status})")
 
         # Generate HTML report if requested
         if args.html and electrodes:
             print("\nGenerating HTML report...")
             try:
                 from pypacer._version import __version__ as PYPACER_VERSION
-                from pypacer.visualization.report_generator import (
+                from pypacer.visualization.report import (
                     generate_html_report_from_data,
                 )
 

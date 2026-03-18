@@ -64,7 +64,29 @@ python transform_contacts_ants.py reconstruction.json \
 
 ---
 
-### 3. `generate_pypacer_report.py`
+### 3. `run_orientation_detection.py`
+
+Run electrode detection with automatic directional marker and orientation analysis.
+
+**Purpose:** Detect DBS electrodes and automatically classify them as directional (Medtronic B33005/B33015) or non-directional (Medtronic 3389/3387) based on the presence of radiopaque markers. For directional electrodes, marker orientation angles are determined.
+
+**Outputs:** Reconstruction JSON with orientation data and hemisphere labels. Prints a summary of detected markers, angles, and electrode classifications.
+
+**Usage:**
+```bash
+# Basic usage
+python run_orientation_detection.py ct_postop.nii.gz
+
+# Specify output directory
+python run_orientation_detection.py ct_postop.nii.gz --output-dir results/
+
+# Use a brain mask
+python run_orientation_detection.py ct_postop.nii.gz --brain-mask mask.nii.gz
+```
+
+---
+
+### 4. `generate_pypacer_report.py`
 
 Generate an interactive HTML report with 3D visualizations of electrode reconstructions.
 

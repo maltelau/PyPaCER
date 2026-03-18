@@ -13,4 +13,4 @@ except ImportError:
         __version__ = pkg_resources.get_distribution("pypacer").version
     except:
         # Fallback for development/editable installs
-        __version__ = "0.9.0"  # Keep this synchronized with pyproject.toml
+        __version__ = "1.1.0"  # Keep this synchronized with pyproject.toml

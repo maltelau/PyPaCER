@@ -192,6 +192,25 @@ Currently supported electrode models:
 - **Medtronic B33015**: Sensight directional lead (1.5mm spacing)
 - **Medtronic B33005**: Sensight directional lead (0.5mm spacing)
 
+### Automatic Orientation Detection
+
+PyPaCER automatically detects directional markers on DBS electrodes during reconstruction. This enables:
+
+- **Electrode type classification**: Distinguishes directional (B33005/B33015) from non-directional (3389/3387) electrodes based on marker presence
+- **Marker orientation**: For directional electrodes, determines the angular orientation of radiopaque markers
+- **Hemisphere labeling**: Automatically labels the hemisphere (left/right) for each electrode's tip and entry positions using the NIfTI header
+
+Orientation results are included in the output JSON and can be accessed programmatically:
+
+```python
+for electrode in electrodes:
+    print(f"Type: {electrode.electrode_type}")
+
+    if electrode.orientation_data and electrode.orientation_data["has_markers"]:
+        for label, marker in electrode.orientation_data["markers"].items():
+            print(f"  Marker {label}: angle={marker['detected_angle_deg']:.1f} deg")
+```
+
 ## Command Line Interface
 
 PyPaCER provides two main CLI commands:
@@ -314,7 +333,7 @@ If you use PyPaCER in your research, please cite both the software and the origi
   title = {PyPaCER},
   year = {2025},
   url = {https://github.com/mvpetersen/pypacer},
-  version = {1.0.0}
+  version = {1.1.0}
 }
 ```
 

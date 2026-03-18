@@ -380,6 +380,22 @@ class PyPaCER_GPU(PyPaCER):
                         refined_model.original_t0_distance_mm
                     )
 
+                # Orientation detection and electrode type classification
+                orientation_data, classified_type = self._run_orientation_detection(
+                    electrode
+                )
+                if orientation_data is not None:
+                    electrode.orientation_data = orientation_data
+                electrode.electrode_type = classified_type
+
+                # Hemisphere detection for tip and entry positions
+                electrode.tip_hemisphere = self._determine_hemisphere(
+                    electrode.tip_position
+                )
+                electrode.entry_hemisphere = self._determine_hemisphere(
+                    electrode.entry_position
+                )
+
                 self.electrodes.append(electrode)
 
                 # Save combined intensity profile plot if debug output is enabled
@@ -684,6 +700,22 @@ class PyPaCER_GPU(PyPaCER):
                 electrode.original_t0_distance_mm = (
                     refined_model.original_t0_distance_mm
                 )
+
+            # Orientation detection and electrode type classification
+            orientation_data, classified_type = self._run_orientation_detection(
+                electrode
+            )
+            if orientation_data is not None:
+                electrode.orientation_data = orientation_data
+            electrode.electrode_type = classified_type
+
+            # Hemisphere detection for tip and entry positions
+            electrode.tip_hemisphere = self._determine_hemisphere(
+                electrode.tip_position
+            )
+            electrode.entry_hemisphere = self._determine_hemisphere(
+                electrode.entry_position
+            )
 
             self.electrodes.append(electrode)
 

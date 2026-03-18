@@ -9,11 +9,7 @@ import plotly.graph_objects as go
 
 def _debug_print(message: str, start_time: Optional[float] = None):
     """Print debug message with timestamp."""
-    if start_time:
-        elapsed = time.time() - start_time
-        print(f"[DEBUG {elapsed:.2f}s] {message}")
-    else:
-        print(f"[DEBUG] {message}")
+    pass
 
 
 def extract_electrode_mesh(

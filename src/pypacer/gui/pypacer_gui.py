@@ -3321,6 +3321,41 @@ class PyPaCERGUI:
                     print(f"  Detected {len(contacts)} contacts")
                     for j, pos in enumerate(contacts):
                         print(f"    Contact {j+1}: {pos:.2f}mm from tip")
+
+                    # Run orientation detection and electrode type classification
+                    try:
+                        orientation_data, classified_type = (
+                            self.pacer._run_orientation_detection(
+                                electrode,
+                                electrode_idx=i,
+                            )
+                        )
+                        if orientation_data is not None:
+                            electrode.orientation_data = orientation_data
+                            print(f"  Orientation: markers detected")
+                        electrode.electrode_type = classified_type
+                        print(f"  Electrode type: {classified_type}")
+                    except Exception as e:
+                        print(f"  Orientation detection error: {e}")
+
+                    # Hemisphere detection for tip and entry positions
+                    try:
+                        electrode.tip_hemisphere = (
+                            self.pacer._determine_hemisphere(
+                                electrode.tip_position
+                            )
+                        )
+                        electrode.entry_hemisphere = (
+                            self.pacer._determine_hemisphere(
+                                electrode.entry_position
+                            )
+                        )
+                        print(
+                            f"  Hemisphere: tip={electrode.tip_hemisphere}, "
+                            f"entry={electrode.entry_hemisphere}"
+                        )
+                    except Exception as e:
+                        print(f"  Hemisphere detection error: {e}")
                 else:
                     print("  No contacts detected")
                     electrode.contact_positions = np.array([])
@@ -3487,7 +3522,7 @@ class PyPaCERGUI:
         # Prepare comprehensive data using PyPaCER format
         data = {
             "metadata": {
-                "ct_file": str(self.ct_path),
+                "ct_file": str(self.ct_path.resolve()),
                 "timestamp": datetime.now().isoformat(),
                 "pypacer_version": PYPACER_VERSION,
                 "voxel_sizes_mm": self.voxel_sizes.tolist(),
@@ -3675,9 +3710,50 @@ class PyPaCERGUI:
             with open(json_path, "w") as f:
                 json.dump(data, f, indent=2)
 
+            # Save minified version (core data only, no large profile arrays)
+            profile_keys = {
+                "intensity_profile",
+                "distance_scale",
+                "skeleton_deviations_mm",
+                "refined_intensity_profile",
+                "pass2_intensities_full",
+                "pass2_distances_mm_full",
+                "trajectory_coordinates",
+                "polynomial_before_tip_detection",
+            }
+            mini_data = {
+                "metadata": data["metadata"],
+                "reconstruction_parameters": data["reconstruction_parameters"],
+                "electrodes": [],
+            }
+            for electrode_data in data["electrodes"]:
+                mini_electrode = {
+                    k: v
+                    for k, v in electrode_data.items()
+                    if k not in profile_keys
+                }
+                # Strip marker intensity profiles from orientation data
+                if "orientation" in mini_electrode:
+                    orient = json.loads(
+                        json.dumps(mini_electrode["orientation"])
+                    )
+                    for marker in orient.get("markers", {}).values():
+                        marker.pop("intensity_profile", None)
+                    if "contact_intensity_profile" in orient:
+                        orient["contact_intensity_profile"].pop(
+                            "intensity", None
+                        )
+                    mini_electrode["orientation"] = orient
+                mini_data["electrodes"].append(mini_electrode)
+
+            mini_path = json_path.with_stem(json_path.stem + "_mini")
+            with open(mini_path, "w") as f:
+                json.dump(mini_data, f, indent=2)
+
             print("\n" + "=" * 60)
             print("JSON SAVED")
             print(f"Location: {json_path}")
+            print(f"Mini JSON: {mini_path}")
             print("=" * 60)
 
         except Exception as e:
@@ -3772,7 +3848,7 @@ class PyPaCERGUI:
 
             # Generate HTML report
             try:
-                from ..visualization.report_generator import generate_html_report
+                from ..visualization.report import generate_html_report
 
                 generate_html_report(
                     reconstruction_json_path=tmp_json_path,

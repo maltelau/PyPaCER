@@ -18,6 +18,14 @@ from ..imaging.preprocessing import (
     filter_metal_components,
 )
 from ..models.electrode import PolynomialElectrodeModel
+from ..orientation import (
+    classify_electrode_type,
+    detect_directional_markers,
+    determine_marker_orientation,
+    fit_constrained_marker_directions,
+)
+from ..orientation import angle_to_vector, validate_marker_pair
+from ..utils.math_helpers import inv_poly_arc_length_3d
 from .contact_detection import detect_contacts
 from .electrode_detection import extract_electrode_pointclouds
 from .refinement import refine_electrode_trajectory
@@ -75,6 +83,14 @@ class PyPaCER:
         self.output_dir = str(output_dir) if output_dir else None
         self.electrodes: List[PolynomialElectrodeModel] = []
 
+        # Clean stale debug files from previous runs
+        if self.debug_output_dir:
+            debug_subdir = Path(self.debug_output_dir) / "debug"
+            if debug_subdir.exists():
+                import shutil
+
+                shutil.rmtree(debug_subdir)
+
     def detect_electrodes(
         self,
         contact_detection_method: str = "contactAreaCenter",
@@ -91,6 +107,7 @@ class PyPaCER:
         ] = 800,  # Lower threshold for refinement, None to disable
         detection_method: str = "radial_search",  # New parameter
         search_radii_mm: List[float] = None,
+        orientation_params: Optional[Dict[str, Any]] = None,
     ) -> List[PolynomialElectrodeModel]:
         """
         Run complete electrode detection pipeline.
@@ -109,6 +126,8 @@ class PyPaCER:
             refinement_threshold: HU threshold for refinement (default 800)
             detection_method: Method for finding electrodes - 'radial_search' (default), 'brain_mask_auto', or 'brain_mask_custom'
             search_radii_mm: Radii for radial search method (default: [30, 40, 50] mm)
+            orientation_params: Optional dict to override orientation detection
+                defaults. See _run_orientation_detection for supported keys.
 
         Returns:
             List of detected electrode models
@@ -128,6 +147,7 @@ class PyPaCER:
                 search_radii_mm=search_radii_mm,
                 max_electrodes=2,
                 verbose=True,
+                orientation_params=orientation_params,
             )
 
         elif detection_method == "brain_mask_auto":
@@ -277,6 +297,24 @@ class PyPaCER:
                     refined_model.original_t0_distance_mm
                 )
 
+            # Orientation detection and electrode type classification
+            orientation_data, classified_type = self._run_orientation_detection(
+                electrode,
+                electrode_idx=i,
+                orientation_params=orientation_params,
+            )
+            if orientation_data is not None:
+                electrode.orientation_data = orientation_data
+            electrode.electrode_type = classified_type
+
+            # Hemisphere detection for tip and entry positions
+            electrode.tip_hemisphere = self._determine_hemisphere(
+                electrode.tip_position
+            )
+            electrode.entry_hemisphere = self._determine_hemisphere(
+                electrode.entry_position
+            )
+
             self.electrodes.append(electrode)
 
             # Save combined intensity profile plot if debug output is enabled
@@ -356,7 +394,7 @@ class PyPaCER:
         if format == "json":
             data = {
                 "electrodes": [e.to_dict() for e in self.electrodes],
-                "ct_file": str(self.ct_path),
+                "ct_file": str(self.ct_path.resolve()),
                 "voxel_sizes": self.voxel_sizes.tolist(),
             }
             with open(output_path, "w") as f:
@@ -375,12 +413,302 @@ class PyPaCER:
 
             data = {
                 "electrodes": [e.to_matlab_struct() for e in self.electrodes],
-                "ct_file": str(self.ct_path),
+                "ct_file": str(self.ct_path.resolve()),
                 "voxel_sizes": self.voxel_sizes,
             }
             savemat(output_path, data)
 
         print(f"Results exported to {output_path}")
+
+    def _run_orientation_detection(
+        self,
+        electrode: PolynomialElectrodeModel,
+        electrode_idx: int = None,
+        orientation_params: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
+        """
+        Run orientation detection on an electrode after contact detection.
+
+        Detects directional markers, classifies electrode type, and if markers
+        are present, determines their orientation angles.
+
+        Args:
+            electrode: Electrode model with contact_positions, distance_scale,
+                intensity_profile, and skeleton_deviations_mm populated.
+            electrode_idx: Electrode index for debug output file naming.
+            orientation_params: Optional dict of parameters to override defaults
+                for the orientation detection pipeline. Supported keys:
+
+                Marker detection (detect_directional_markers):
+                    marker_offset_mm (float): Distance above last contact where
+                        marker search begins. Default: 2.5
+                    max_distance_mm (float): Maximum distance from tip for
+                        marker search region. Default: 20.0
+                    deviation_threshold (float): Minimum skeleton deviation for
+                        peak detection. Default: 0.08
+                    min_peak_distance_mm (float): Minimum distance between
+                        detected peaks. Default: 2.0
+                    expected_num_peaks (int): Expected number of marker peaks.
+                        Default: 2
+
+                Orientation analysis (determine_marker_orientation):
+                    radii_mm (list[float]): Circular sampling radii around
+                        trajectory. Default: [1.25, 1.5, 1.75]
+                    angle_increment_deg (float): Angular step for intensity
+                        sampling. Default: 0.1
+                    smoothing_window (int): Window size for profile smoothing.
+                        Default: 5
+                    check_for_bias (bool): Check for bias from opposite marker.
+                        Default: True
+                    bias_opposite_peak_threshold (float): Threshold for bias
+                        detection. Default: 0.7
+
+                Marker pair validation (validate_marker_pair):
+                    min_separation_deg (float): Minimum valid angular separation
+                        between markers. Default: 120.0
+                    max_separation_deg (float): Maximum valid angular separation
+                        between markers. Default: 150.0
+
+                Constrained fitting (fit_constrained_marker_directions):
+                    angular_constraint_deg (float): Fixed angular separation
+                        for fitted marker directions. Default: 120.0
+
+        Returns:
+            Tuple of (orientation_data_dict or None, classified_electrode_type).
+            On failure, returns (None, electrode.electrode_type).
+        """
+        if orientation_params is None:
+            orientation_params = {}
+        original_type = electrode.electrode_type
+
+        try:
+            # Need distance_scale, intensity_profile, and contact_positions
+            if (
+                electrode.distance_scale is None
+                or electrode.intensity_profile is None
+                or electrode.contact_positions is None
+                or len(electrode.contact_positions) == 0
+            ):
+                print("  Orientation detection skipped: missing required data")
+                return None, original_type
+
+            # Step 1: Detect directional markers
+            marker_detection_kwargs = {}
+            for key in (
+                "marker_offset_mm",
+                "max_distance_mm",
+                "deviation_threshold",
+                "min_peak_distance_mm",
+                "expected_num_peaks",
+            ):
+                if key in orientation_params:
+                    marker_detection_kwargs[key] = orientation_params[key]
+
+            marker_result = detect_directional_markers(
+                distance_scale=electrode.distance_scale,
+                intensity_profile=electrode.intensity_profile,
+                skeleton_deviations=electrode.skeleton_deviations_mm,
+                contact_positions=electrode.contact_positions.tolist(),
+                **marker_detection_kwargs,
+            )
+            print(
+                f"  Marker detection: {len(marker_result.marker_peak_locations)} peak(s) found "
+                f"via {marker_result.detection_method} (confidence={marker_result.confidence:.2f})"
+            )
+
+            # Step 2: Classify electrode type based on contact spacing + markers
+            classified_type = classify_electrode_type(
+                contact_positions=electrode.contact_positions.tolist(),
+                marker_detection_result=marker_result,
+            )
+
+            # Build orientation data dict (cast numpy types to Python natives for JSON)
+            orientation_data = {
+                "has_markers": bool(marker_result.has_markers),
+                "marker_detection_confidence": float(marker_result.confidence),
+                "detection_method": str(marker_result.detection_method),
+                "classified_electrode_type": str(classified_type),
+            }
+
+            # Step 3: If markers detected, determine their orientation
+            if marker_result.has_markers and len(marker_result.marker_peak_locations) > 0:
+                markers_info = {}
+                marker_orientations = []
+
+                # Sort peaks: B is closer to contacts (lower distance), A is farther
+                sorted_peaks = sorted(marker_result.marker_peak_locations)
+                labels = ["B", "A"] if len(sorted_peaks) >= 2 else ["B"]
+
+                for idx, (label, peak_mm) in enumerate(
+                    zip(labels, sorted_peaks[: len(labels)])
+                ):
+                    # Get trajectory direction at marker location
+                    t_marker = inv_poly_arc_length_3d(electrode.polynomial, peak_mm)
+                    direction = electrode.get_tangent_at(t_marker)
+
+                    # Determine marker orientation
+                    orientation_kwargs = {}
+                    for key in (
+                        "radii_mm",
+                        "angle_increment_deg",
+                        "smoothing_window",
+                        "check_for_bias",
+                        "bias_opposite_peak_threshold",
+                    ):
+                        if key in orientation_params:
+                            orientation_kwargs[key] = orientation_params[key]
+
+                    orient_result = determine_marker_orientation(
+                        ct_data=self.ct_data,
+                        affine=self.affine,
+                        electrode_polynomial=electrode.polynomial,
+                        marker_location_mm=peak_mm,
+                        trajectory_direction=direction,
+                        **orientation_kwargs,
+                    )
+                    marker_orientations.append(orient_result)
+                    print(
+                        f"    Marker {label} at {peak_mm:.1f}mm: "
+                        f"angle={orient_result.peak_angle_deg:.1f}\u00b0, "
+                        f"confidence={orient_result.confidence:.2f}"
+                        f"{', bias detected' if orient_result.analysis_metadata.get('bias_detected') else ''}"
+                    )
+
+                    # Compute 3D position at marker location
+                    marker_position = electrode.get_point_at_parameter(t_marker)
+
+                    markers_info[label] = {
+                        "distance_from_tip_mm": float(peak_mm),
+                        "detected_angle_traj_perp_deg": float(orient_result.peak_angle_deg),
+                        "detection_confidence": float(orient_result.confidence),
+                        "position_xyz": marker_position.tolist(),
+                        "direction_vector": orient_result.orientation_vector_world.tolist(),
+                        # Intensity profile for orientation tab charts
+                        "intensity_profile": {
+                            "angle_step_deg": float(orient_result.sampling_result.angles_deg[1] - orient_result.sampling_result.angles_deg[0]),
+                            "mean_intensity": orient_result.sampling_result.mean_intensity_by_angle.tolist(),
+                        },
+                    }
+
+                # If two markers, validate pair and fit constrained directions
+                fitted_angles_debug = None
+                if len(marker_orientations) == 2:
+                    validate_kwargs = {}
+                    for key in ("min_separation_deg", "max_separation_deg"):
+                        if key in orientation_params:
+                            validate_kwargs[key] = orientation_params[key]
+
+                    is_valid, angular_sep = validate_marker_pair(
+                        marker_orientations[0],
+                        marker_orientations[1],
+                        **validate_kwargs,
+                    )
+                    orientation_data["marker_pair_valid"] = bool(is_valid)
+                    orientation_data["marker_pair_angular_separation_deg"] = float(
+                        angular_sep
+                    )
+                    valid_str = "valid" if is_valid else "INVALID"
+                    print(f"    Pair separation: {angular_sep:.1f}\u00b0 ({valid_str})")
+
+                    # Fit constrained directions (120 deg separation)
+                    fit_kwargs = {}
+                    if "angular_constraint_deg" in orientation_params:
+                        fit_kwargs["angular_constraint_deg"] = orientation_params[
+                            "angular_constraint_deg"
+                        ]
+
+                    fitted_b, fitted_a = fit_constrained_marker_directions(
+                        marker_orientations[0],
+                        marker_orientations[1],
+                        **fit_kwargs,
+                    )
+                    markers_info["B"]["fitted_angle_traj_perp_deg"] = float(fitted_b)
+                    markers_info["A"]["fitted_angle_traj_perp_deg"] = float(fitted_a)
+                    fitted_angles_debug = [fitted_b, fitted_a]
+                    print(
+                        f"    Constrained fit (120\u00b0): B={fitted_b:.1f}\u00b0, A={fitted_a:.1f}\u00b0"
+                    )
+
+                    # Update direction vectors to use fitted angles
+                    for label, fitted_angle, orient_result in zip(
+                        labels, [fitted_b, fitted_a], marker_orientations
+                    ):
+                        fitted_vec = angle_to_vector(
+                            fitted_angle,
+                            orient_result.sampling_result.normal_vector,
+                            self.affine,
+                        )
+                        markers_info[label]["direction_vector"] = fitted_vec.tolist()
+
+                # Save combined marker orientation debug visualization
+                if self.debug_output_dir and electrode_idx is not None:
+                    from pathlib import Path
+
+                    from ..orientation.visualization import (
+                        visualize_marker_orientations,
+                    )
+
+                    debug_dir = Path(self.debug_output_dir) / "debug"
+                    debug_dir.mkdir(parents=True, exist_ok=True)
+
+                    # Collect positions and directions for all markers
+                    marker_positions_debug = []
+                    marker_directions_debug = []
+                    for peak_mm_d in sorted_peaks[: len(labels)]:
+                        t_d = inv_poly_arc_length_3d(electrode.polynomial, peak_mm_d)
+                        marker_positions_debug.append(
+                            electrode.get_point_at_parameter(t_d)
+                        )
+                        marker_directions_debug.append(
+                            electrode.get_tangent_at(t_d)
+                        )
+
+                    visualize_marker_orientations(
+                        ct_data=self.ct_data,
+                        affine=self.affine,
+                        marker_positions=marker_positions_debug,
+                        marker_directions=marker_directions_debug,
+                        orientation_results=marker_orientations,
+                        labels=labels,
+                        electrode_idx=electrode_idx,
+                        fitted_angles=fitted_angles_debug,
+                        output_path=debug_dir
+                        / f"electrode_{electrode_idx}_marker_orientations.png",
+                    )
+
+                orientation_data["markers"] = markers_info
+                print(
+                    f"  Orientation: markers detected (confidence={marker_result.confidence:.2f}), "
+                    f"classified as {classified_type}"
+                )
+
+            else:
+                print(f"  Orientation: no markers detected, classified as {classified_type}")
+
+            return orientation_data, classified_type
+
+        except Exception as e:
+            print(f"  Warning: Orientation detection failed: {e}")
+            if self.debug_output_dir:
+                import traceback
+
+                traceback.print_exc()
+            return None, original_type
+
+    def _determine_hemisphere(self, point_world: np.ndarray) -> str:
+        """
+        Determine which hemisphere a world-coordinate point is in.
+
+        NIfTI world coordinates follow the RAS convention where the X axis
+        is the Left-Right axis with positive values pointing Right.
+
+        Args:
+            point_world: 3D point in world coordinates.
+
+        Returns:
+            "left" or "right"
+        """
+        return "right" if point_world[0] >= 0 else "left"
 
     def _save_intensity_profile_plot(
         self,
@@ -672,7 +1000,7 @@ class PyPaCER:
         # Prepare comprehensive data
         data = {
             "metadata": {
-                "ct_file": str(self.ct_path),
+                "ct_file": str(self.ct_path.resolve()),
                 "timestamp": datetime.now().isoformat(),
                 "pypacer_version": PYPACER_VERSION,
                 "voxel_sizes_mm": self.voxel_sizes.tolist(),
@@ -714,7 +1042,42 @@ class PyPaCER:
         with open(output_path, "w") as f:
             json.dump(data, f, indent=2)
 
+        # Save minified version (core data only, no large profile arrays)
+        profile_keys = {
+            "intensity_profile",
+            "distance_scale",
+            "skeleton_deviations_mm",
+            "refined_intensity_profile",
+            "pass2_intensities_full",
+            "pass2_distances_mm_full",
+            "trajectory_coordinates",
+            "polynomial_before_tip_detection",
+        }
+        mini_data = {
+            "metadata": data["metadata"],
+            "reconstruction_parameters": data["reconstruction_parameters"],
+            "electrodes": [],
+        }
+        for electrode_data in data["electrodes"]:
+            mini_electrode = {
+                k: v for k, v in electrode_data.items() if k not in profile_keys
+            }
+            # Strip marker intensity profiles from orientation data
+            if "orientation" in mini_electrode:
+                orient = json.loads(json.dumps(mini_electrode["orientation"]))
+                for marker in orient.get("markers", {}).values():
+                    marker.pop("intensity_profile", None)
+                if "contact_intensity_profile" in orient:
+                    orient["contact_intensity_profile"].pop("intensity", None)
+                mini_electrode["orientation"] = orient
+            mini_data["electrodes"].append(mini_electrode)
+
+        mini_path = output_path.with_stem(output_path.stem + "_mini")
+        with open(mini_path, "w") as f:
+            json.dump(mini_data, f, indent=2)
+
         print(f"Reconstruction results saved to: {output_path}")
+        print(f"Minified results saved to: {mini_path}")
         return output_path
 
     def detect_electrodes_auto(
@@ -725,6 +1088,7 @@ class PyPaCER:
         search_radii_mm: List[float] = None,
         max_electrodes: int = 2,
         verbose: bool = True,
+        orientation_params: Optional[Dict[str, Any]] = None,
     ) -> List[PolynomialElectrodeModel]:
         """
         Detect electrodes using the GUI auto run pipeline.
@@ -744,6 +1108,8 @@ class PyPaCER:
             search_radii_mm: Radii to search for electrodes (default: [30, 40, 50])
             max_electrodes: Expected maximum number of electrodes (default: 2)
             verbose: Print progress messages
+            orientation_params: Optional dict to override orientation detection
+                defaults. See _run_orientation_detection for supported keys.
 
         Returns:
             List of detected electrode models
@@ -753,7 +1119,7 @@ class PyPaCER:
             search_radii_mm = [30, 40, 50]
 
         if verbose:
-            print("\n=== Starting automatic electrode detection (GUI pipeline) ===")
+            print("\n=== Starting automatic electrode detection ===")
 
         # Import required modules
 
@@ -1045,6 +1411,24 @@ class PyPaCER:
                     refined_model.intensity_profile
                 )
                 final_electrode.refined_distance_scale = distance_scale
+
+                # Orientation detection and electrode type classification
+                orientation_data, classified_type = self._run_orientation_detection(
+                    final_electrode,
+                    electrode_idx=i,
+                    orientation_params=orientation_params,
+                )
+                if orientation_data is not None:
+                    final_electrode.orientation_data = orientation_data
+                final_electrode.electrode_type = classified_type
+
+                # Hemisphere detection for tip and entry positions
+                final_electrode.tip_hemisphere = self._determine_hemisphere(
+                    final_electrode.tip_position
+                )
+                final_electrode.entry_hemisphere = self._determine_hemisphere(
+                    final_electrode.entry_position
+                )
 
                 self.electrodes.append(final_electrode)
                 if verbose:
@@ -1390,6 +1774,7 @@ class PyPaCER:
         search_radii_mm: List[float] = None,
         max_electrodes: int = 4,
         verbose: bool = True,
+        orientation_params: Optional[Dict[str, Any]] = None,
     ) -> List[PolynomialElectrodeModel]:
         """
         Detect electrodes using radial search with configurable parameters.
@@ -1410,6 +1795,8 @@ class PyPaCER:
             search_radii_mm: Radii to search for electrodes (default: [30, 40, 50])
             max_electrodes: Maximum number of electrodes to detect
             verbose: Print progress messages
+            orientation_params: Optional dict to override orientation detection
+                defaults. See _run_orientation_detection for supported keys.
 
         Returns:
             List of detected electrode models
@@ -1639,6 +2026,24 @@ class PyPaCER:
                     electrode.original_t0_distance_mm = (
                         refined_model.original_t0_distance_mm
                     )
+
+                # Orientation detection and electrode type classification
+                orientation_data, classified_type = self._run_orientation_detection(
+                    electrode,
+                    electrode_idx=i,
+                    orientation_params=orientation_params,
+                )
+                if orientation_data is not None:
+                    electrode.orientation_data = orientation_data
+                electrode.electrode_type = classified_type
+
+                # Hemisphere detection for tip and entry positions
+                electrode.tip_hemisphere = self._determine_hemisphere(
+                    electrode.tip_position
+                )
+                electrode.entry_hemisphere = self._determine_hemisphere(
+                    electrode.entry_position
+                )
 
                 self.electrodes.append(electrode)
                 cog_trajectories.append(

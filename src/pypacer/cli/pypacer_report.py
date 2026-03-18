@@ -18,7 +18,7 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from pypacer.visualization.report_generator import generate_html_report
+from pypacer.visualization.report import generate_html_report
 
 
 def main():
@@ -101,9 +101,34 @@ Examples:
             )
             sys.exit(1)
 
+        # Check if this is a minified JSON (missing data needed for reports)
+        if "_mini" in input_path.stem:
+            print(
+                "Error: Cannot generate report from minified JSON (*_mini.json).\n"
+                "       The mini JSON contains only core results (contacts, orientation)\n"
+                "       and is missing intensity profiles and trajectory data needed for\n"
+                "       the HTML report. Use the full JSON file instead.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        # Validate that electrodes have required data for report generation
+        required_fields = ["polynomial", "contact_positions"]
+        for i, electrode in enumerate(data["electrodes"]):
+            missing = [f for f in required_fields if f not in electrode]
+            if missing:
+                print(
+                    f"Error: Electrode {i+1} is missing required fields: {', '.join(missing)}.\n"
+                    f"       This JSON may not contain enough data for report generation.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON file: {e}", file=sys.stderr)
         sys.exit(1)
+    except SystemExit:
+        raise
     except Exception as e:
         print(f"Error reading input file: {e}", file=sys.stderr)
         sys.exit(1)
